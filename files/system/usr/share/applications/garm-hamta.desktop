@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Garm: Hämta mina inställningar
+Comment=Hämta det senaste från familjens server, inklusive nya appar
+Exec=garm-hamta
+Icon=download
+Terminal=false
+Categories=System;Settings;

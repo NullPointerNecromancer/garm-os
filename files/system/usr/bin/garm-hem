@@ -1,0 +1,152 @@
+#!/bin/bash
+# Garm: Kom igång
+# Kopplar användarens konto till familjens Git-server och hämtar sparade inställningar och appar.
+set -uo pipefail
+
+[[ -f /etc/garm/garm.conf ]] && source /etc/garm/garm.conf
+GARM_GIT_URL="${GARM_GIT_URL:-http://192.168.1.51:3000}"
+GARM_GIT_URL="${GARM_GIT_URL%/}"
+GIT_SCHEME="${GARM_GIT_URL%%://*}"
+GIT_HOST="${GARM_GIT_URL#*://}"
+REPO="dotfiles"
+SRC="$HOME/.local/share/chezmoi"
+LOGG_DIR="$HOME/.cache/garm"
+LOGG="$LOGG_DIR/kom-igang.log"
+TITEL="Garm – kom igång"
+
+mkdir -p "$LOGG_DIR"
+
+fel() {
+  kdialog --title "$TITEL" --error "$1"
+  exit 1
+}
+
+for prog in chezmoi git curl jq kdialog; do
+  command -v "$prog" >/dev/null || { echo "Saknar $prog"; exit 1; }
+done
+
+# Redan kopplad? Erbjud att hämta senaste istället.
+if [[ -d "$SRC/.git" ]]; then
+  if kdialog --title "$TITEL" --yes-label "Hämta senaste" --no-label "Avbryt" \
+      --yesno "Den här datorn är redan kopplad till dina inställningar.
+
+Vill du hämta det senaste istället?"; then
+    exec garm-hamta
+  fi
+  exit 0
+fi
+
+kdialog --title "$TITEL" --msgbox "Välkommen till Garm! 🐺
+
+Nu kopplar vi ditt konto till familjens Git-server. Då följer dina inställningar och appar med dig till alla Garm-datorer.
+
+Du behöver:
+ • ditt användarnamn i Forgejo
+ • en åtkomstnyckel (token) från Forgejo
+
+Datorn måste vara ansluten till hemmanätverket."
+
+# Når vi servern?
+curl -fsS --max-time 5 "$GARM_GIT_URL/api/v1/version" >/dev/null 2>&1 \
+  || fel "Når inte Git-servern ($GARM_GIT_URL).
+
+Är datorn ansluten till hemmanätverket?"
+
+ANV=$(kdialog --title "$TITEL" --inputbox "Ditt användarnamn i Forgejo:" "$USER") || exit 0
+[[ -n "$ANV" ]] || fel "Inget användarnamn angavs."
+
+NYCKEL=$(kdialog --title "$TITEL" --password "Din åtkomstnyckel (token) från Forgejo:
+
+(Forgejo → Settings → Applications → Generate new token.
+Rättigheter: repository = Read and write, user = Read.)") || exit 0
+[[ -n "$NYCKEL" ]] || fel "Ingen nyckel angavs."
+
+# Kontrollera nyckeln
+SVAR=$(curl -fsS --max-time 10 -H "Authorization: token $NYCKEL" "$GARM_GIT_URL/api/v1/user" 2>/dev/null) \
+  || fel "Nyckeln fungerade inte.
+
+Kontrollera att den är rätt kopierad och har rättigheterna
+repository = Read and write och user = Read."
+INLOGG=$(jq -r '.login // empty' <<<"$SVAR")
+[[ -n "$INLOGG" ]] || fel "Kunde inte läsa kontot från servern."
+[[ "${INLOGG,,}" == "${ANV,,}" ]] || fel "Nyckeln tillhör kontot \"$INLOGG\", inte \"$ANV\"."
+ANV="$INLOGG"
+
+# Finns inställningsrepot? Annars skapa det.
+NYTT_REPO=false
+KOD=$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 \
+  -H "Authorization: token $NYCKEL" "$GARM_GIT_URL/api/v1/repos/$ANV/$REPO")
+if [[ "$KOD" == "404" ]]; then
+  NYTT_REPO=true
+  kdialog --title "$TITEL" --yesno "Du har inget inställningsrepo ännu.
+
+Ska jag skapa ett privat repo åt dig?" || exit 0
+  curl -fsS --max-time 10 -X POST \
+    -H "Authorization: token $NYCKEL" -H "Content-Type: application/json" \
+    -d "{\"name\":\"$REPO\",\"private\":true,\"default_branch\":\"main\"}" \
+    "$GARM_GIT_URL/api/v1/user/repos" >/dev/null 2>&1 \
+    || fel "Kunde inte skapa repot på servern."
+elif [[ "$KOD" != "200" ]]; then
+  fel "Oväntat svar från servern ($KOD) när jag letade efter ditt repo."
+fi
+
+# Spara inloggningen – bara för familjens server
+git config --global "credential.$GARM_GIT_URL.helper" store
+touch "$HOME/.git-credentials"
+chmod 600 "$HOME/.git-credentials"
+grep -vF "@$GIT_HOST" "$HOME/.git-credentials" > "$HOME/.git-credentials.ny" || true
+echo "$GIT_SCHEME://$ANV:$NYCKEL@$GIT_HOST" >> "$HOME/.git-credentials.ny"
+mv "$HOME/.git-credentials.ny" "$HOME/.git-credentials"
+chmod 600 "$HOME/.git-credentials"
+
+# chezmoi: skicka ändringar automatiskt till servern
+mkdir -p "$HOME/.config/chezmoi"
+if [[ ! -f "$HOME/.config/chezmoi/chezmoi.toml" ]]; then
+  cat > "$HOME/.config/chezmoi/chezmoi.toml" <<'EOF'
+[git]
+    autoCommit = true
+    autoPush = true
+EOF
+fi
+
+kdialog --title "$TITEL" --yes-label "Fortsätt" --no-label "Avbryt" --warningyesno \
+  "Dina sparade inställningar hämtas nu och ersätter datorns nuvarande versioner av samma filer.
+
+Apparna i din lista installeras också. Det kan ta en stund." || exit 0
+
+kdialog --title "$TITEL" --passivepopup "Hämtar dina inställningar och appar… 🐺" 10 &
+
+{
+  chezmoi init "$GARM_GIT_URL/$ANV/$REPO.git" &&
+  git -C "$SRC" config user.name "$ANV" &&
+  git -C "$SRC" config user.email "$ANV@garm.lan" &&
+  git -C "$SRC" config push.autoSetupRemote true &&
+  { git -C "$SRC" rev-parse --verify HEAD >/dev/null 2>&1 || git -C "$SRC" symbolic-ref HEAD refs/heads/main; } &&
+  # Nytt repo: lägg in Garms startmall (app-lista + installationsskript) och skicka upp den
+  { ! $NYTT_REPO || {
+      cp -a /usr/share/garm/dotfiles-mall/. "$SRC/" &&
+      git -C "$SRC" add -A &&
+      git -C "$SRC" commit -m "Startinställningar från Garm" &&
+      git -C "$SRC" push
+    }; } &&
+  chezmoi apply --force
+} >"$LOGG" 2>&1 || fel "Något gick fel när inställningarna hämtades.
+
+Detaljer finns i:
+$LOGG"
+
+if kdialog --title "$TITEL" --yesno "Ska datorn hämta ändringar automatiskt en gång om dagen?
+
+Rekommenderas för familjens datorer.
+Välj Nej om du själv vill bestämma när ändringar hämtas."; then
+  systemctl --user enable --now garm-synk.timer >>"$LOGG" 2>&1
+fi
+
+kdialog --title "$TITEL" --msgbox "Klart! 🐺
+
+Dina inställningar och appar är på plats.
+
+• Spara ändringar: \"Garm: Spara mina inställningar\"
+• Hämta senaste: \"Garm: Hämta mina inställningar\"
+
+Båda finns i programmenyn."

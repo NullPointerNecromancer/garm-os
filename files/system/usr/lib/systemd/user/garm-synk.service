@@ -1,0 +1,7 @@
+[Unit]
+Description=Garm: hämta inställningar från familjens Git-server
+ConditionPathExists=%h/.local/share/chezmoi/.git
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/garm-hamta --auto

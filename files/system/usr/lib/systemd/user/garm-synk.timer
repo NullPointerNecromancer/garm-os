@@ -1,0 +1,10 @@
+[Unit]
+Description=Garm: hämta inställningar en gång om dagen
+
+[Timer]
+OnCalendar=daily
+Persistent=true
+RandomizedDelaySec=30min
+
+[Install]
+WantedBy=timers.target

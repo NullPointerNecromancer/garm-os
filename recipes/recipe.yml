@@ -11,17 +11,26 @@ image-version: stable
 
 modules:
   # Egna filer: allt under files/system/ i repot kopieras till samma sökväg i systemet
-  # (fastfetch-logga och inställningar)
+  # (fastfetch-logga, Garm-verktygen, menyposter och synk-timer)
   - type: files
     files:
       - source: system
         destination: /
+
+  # Garm-verktygen måste vara körbara (behörigheten försvinner vid uppladdning via webben)
+  - type: script
+    snippets:
+      - "chmod 0755 /usr/bin/garm-hem /usr/bin/garm-spara /usr/bin/garm-hamta"
 
   # Program som bakas in i själva systemet (RPM). Lägg till en rad per program.
   - type: dnf
     install:
       packages:
         - htop
+        - alacritty   # terminal
+        - chezmoi     # sparar personliga inställningar (används av Garm-verktygen)
+        - jq          # används av Garm-verktygen
+        - kdialog     # dialogrutorna i Garm-verktygen
 
   # Appar som installeras automatiskt på alla datorer, för alla användare
   - type: default-flatpaks

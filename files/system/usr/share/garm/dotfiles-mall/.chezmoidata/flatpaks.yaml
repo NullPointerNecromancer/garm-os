@@ -1,0 +1,4 @@
+# Mina appar – installeras automatiskt på alla mina Garm-datorer.
+# Lägg till en rad per app (app-ID hittar du på flathub.org), t.ex.:
+#   - com.discordapp.Discord
+flatpaks:

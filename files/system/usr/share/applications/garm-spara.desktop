@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Garm: Spara mina inställningar
+Comment=Skicka dina ändrade inställningar till familjens server
+Exec=garm-spara
+Icon=document-save
+Terminal=false
+Categories=System;Settings;
