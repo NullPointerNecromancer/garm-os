@@ -1,0 +1,59 @@
+#!/bin/bash
+# Garm: Hämta mina inställningar
+# Hämtar det senaste från familjens Git-server och lägger det på plats (inkl. nya appar i listan).
+#   garm-hamta          – körs från menyn, visar dialoger
+#   garm-hamta --auto   – körs av den dagliga timern, tyst om allt går bra
+set -uo pipefail
+
+[[ -f /etc/garm/garm.conf ]] && source /etc/garm/garm.conf
+GARM_GIT_URL="${GARM_GIT_URL:-http://192.168.1.51:3000}"
+SRC="$HOME/.local/share/chezmoi"
+LOGG_DIR="$HOME/.cache/garm"
+LOGG="$LOGG_DIR/hamta.log"
+TITEL="Garm – hämta inställningar"
+AUTO=false
+[[ "${1:-}" == "--auto" ]] && AUTO=true
+mkdir -p "$LOGG_DIR"
+
+fel() {
+  if $AUTO; then
+    notify-send -a Garm "Garm kunde inte hämta inställningar" "Detaljer: $LOGG" 2>/dev/null || true
+  else
+    kdialog --title "$TITEL" --error "$1"
+  fi
+  exit 1
+}
+
+[[ -d "$SRC/.git" ]] || { $AUTO && exit 0; fel "Den här datorn är inte kopplad ännu.
+
+Kör \"Garm: Kom igång\" i programmenyn först."; }
+
+# Inte hemma? Då väntar vi till nästa gång, utan att tjata.
+if ! curl -fsS --max-time 5 "${GARM_GIT_URL%/}/api/v1/version" >/dev/null 2>&1; then
+  $AUTO && exit 0
+  fel "Når inte Git-servern ($GARM_GIT_URL).
+
+Är datorn ansluten till hemmanätverket?"
+fi
+
+# Tomt repo på servern? Då finns inget att hämta än.
+if [[ -z "$(git -C "$SRC" ls-remote --heads origin 2>/dev/null)" ]]; then
+  $AUTO || kdialog --title "$TITEL" --msgbox "Det finns inget sparat på servern ännu."
+  exit 0
+fi
+
+# Varna vid manuell körning om det finns osparade ändringar som skulle skrivas över
+if ! $AUTO && [[ -n "$(chezmoi status 2>/dev/null)" ]]; then
+  kdialog --title "$TITEL" --yes-label "Hämta ändå" --no-label "Avbryt" --warningyesno \
+    "Du har ändringar på den här datorn som inte är sparade.
+
+Hämtar du nu ersätts de av versionen på servern.
+(Välj Avbryt och kör \"Garm: Spara mina inställningar\" först om du vill behålla dem.)" || exit 0
+fi
+
+chezmoi update --force >"$LOGG" 2>&1 || fel "Något gick fel när inställningarna hämtades.
+
+Detaljer finns i:
+$LOGG"
+
+$AUTO || kdialog --title "$TITEL" --passivepopup "Dina inställningar är uppdaterade 🐺" 5

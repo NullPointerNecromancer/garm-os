@@ -1,0 +1,33 @@
+#!/bin/bash
+# Garm: Spara mina inställningar
+# Tar med ändringar i de filer som redan följer med och skickar dem till familjens Git-server.
+set -uo pipefail
+
+SRC="$HOME/.local/share/chezmoi"
+LOGG_DIR="$HOME/.cache/garm"
+LOGG="$LOGG_DIR/spara.log"
+TITEL="Garm – spara inställningar"
+mkdir -p "$LOGG_DIR"
+
+fel() {
+  kdialog --title "$TITEL" --error "$1"
+  exit 1
+}
+
+[[ -d "$SRC/.git" ]] || fel "Den här datorn är inte kopplad ännu.
+
+Kör \"Garm: Kom igång\" i programmenyn först."
+
+{
+  chezmoi re-add &&
+  git -C "$SRC" add -A &&
+  { git -C "$SRC" diff --cached --quiet || git -C "$SRC" commit -m "Sparat från $(hostname) $(date '+%F %H:%M')"; } &&
+  git -C "$SRC" push
+} >"$LOGG" 2>&1 || fel "Kunde inte spara till servern.
+
+Är datorn ansluten till hemmanätverket?
+
+Detaljer finns i:
+$LOGG"
+
+kdialog --title "$TITEL" --passivepopup "Dina inställningar är sparade 🐺" 5

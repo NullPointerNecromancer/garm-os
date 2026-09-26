@@ -1,0 +1,13 @@
+{{- /* Körs bara på Garm-datorer, och bara när app-listan ändrats */ -}}
+{{ if and (eq .chezmoi.os "linux") (eq (index .chezmoi.osRelease "name") "Garm") -}}
+#!/bin/bash
+set -euo pipefail
+
+# Se till att Flathub finns för den här användaren
+flatpak remote-add --user --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
+
+# Installera (eller uppdatera) varje app i listan
+{{ range .flatpaks -}}
+flatpak install --user --noninteractive --or-update flathub {{ . | quote }}
+{{ end -}}
+{{ end -}}
